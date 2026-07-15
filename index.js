@@ -219,15 +219,13 @@ async function sendLog(guildId, type, data) {
 // ============================================================
 //                        СИСТЕМА ТИКЕТОВ
 // ============================================================
-const ticketData = {};
-
 async function createTicket(interaction) {
     const guild = interaction.guild;
     const categoryId = process.env.TICKET_CATEGORY_ID;
     const staffRoleId = process.env.TICKET_STAFF_ROLE_ID;
 
     if (!categoryId || !staffRoleId) {
-        return interaction.reply({ content: '❌ Система тикетов не настроена!', ephemeral: true });
+        return interaction.reply({ content: '❌ Система тикетов не настроена (TICKET_CATEGORY_ID или TICKET_STAFF_ROLE_ID)!', ephemeral: true });
     }
 
     const existingChannel = guild.channels.cache.find(
@@ -249,13 +247,6 @@ async function createTicket(interaction) {
             { id: staffRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages] },
         ],
     });
-
-    ticketData[ticketChannel.id] = {
-        userId: interaction.user.id,
-        staffId: null,
-        status: 'open',
-        createdAt: Date.now(),
-    };
 
     const ticketEmbed = new EmbedBuilder()
         .setTitle('🎫 Тикет создан')
@@ -550,22 +541,108 @@ function formatDuration(ms) {
     return parts.join(' ') || 'меньше минуты';
 }
 
-async function giveAfkRole(guild, userId) {
-    const roleId = process.env.AFK_ROLE_ID;
-    if (!roleId) return;
+function formatDate(date) {
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${day}.${month}`;
+}
+
+// Авто-создание роли отпуска
+async function getOrCreateAfkRole(guild) {
+    const roleName = '🏖️ Отпуск';
+
+    // Ищем существующую роль
+    let role = guild.roles.cache.find(r => r.name === roleName);
+
+    if (!role) {
+        // Создаём новую роль
+        try {
+            role = await guild.roles.create({
+                name: roleName,
+                color: 0xE67E22,
+                hoist: false,
+                mentionable: true,
+                reason: 'Авто-создание роли для отпусков',
+            });
+            console.log(`✅ Роль "${roleName}" создана на сервере ${guild.name}`);
+        } catch (e) {
+            console.error('Ошибка создания роли отпуска:', e);
+            return null;
+        }
+    }
+
+    return role;
+}
+
+async function giveAfkRole(guild, userId, returnTime) {
+    const role = await getOrCreateAfkRole(guild);
+    if (!role) return;
+
     try {
         const member = await guild.members.fetch(userId);
-        if (member) await member.roles.add(roleId);
-    } catch (e) {}
+        if (!member) return;
+
+        // Даём роль
+        await member.roles.add(role);
+
+        // Если есть дата возврата, создаём временную роль с датой
+        if (returnTime) {
+            const returnDate = formatDate(returnTime);
+            const tempRoleName = `🏖️ До ${returnDate}`;
+
+            // Удаляем старые временные роли пользователя
+            const oldRoles = member.roles.cache.filter(r => r.name.startsWith('🏖️ До '));
+            for (const oldRole of oldRoles.values()) {
+                await member.roles.remove(oldRole).catch(() => {});
+                // Если роль больше ни у кого нет — удаляем
+                if (oldRole.members.size <= 1) {
+                    await oldRole.delete().catch(() => {});
+                }
+            }
+
+            // Создаём новую временную роль
+            let tempRole = guild.roles.cache.find(r => r.name === tempRoleName);
+            if (!tempRole) {
+                tempRole = await guild.roles.create({
+                    name: tempRoleName,
+                    color: 0xE74C3C,
+                    hoist: true,
+                    mentionable: false,
+                    reason: `Отпуск до ${returnDate}`,
+                });
+            }
+
+            await member.roles.add(tempRole);
+        }
+    } catch (e) {
+        console.error('Ошибка выдачи роли отпуска:', e);
+    }
 }
 
 async function removeAfkRole(guild, userId) {
-    const roleId = process.env.AFK_ROLE_ID;
-    if (!roleId) return;
     try {
         const member = await guild.members.fetch(userId);
-        if (member) await member.roles.remove(roleId);
-    } catch (e) {}
+        if (!member) return;
+
+        // Убираем основную роль отпуска
+        const mainRole = guild.roles.cache.find(r => r.name === '🏖️ Отпуск');
+        if (mainRole && member.roles.cache.has(mainRole.id)) {
+            await member.roles.remove(mainRole);
+        }
+
+        // Убираем временные роли "До ..."
+        const tempRoles = member.roles.cache.filter(r => r.name.startsWith('🏖️ До '));
+        for (const tempRole of tempRoles.values()) {
+            await member.roles.remove(tempRole).catch(() => {});
+            // Если роль больше никому не нужна — удаляем
+            if (tempRole.members.size <= 0) {
+                await tempRole.delete().catch(() => {});
+            }
+        }
+    } catch (e) {
+        console.error('Ошибка снятия роли отпуска:', e);
+    }
 }
 
 async function processVacation(interaction) {
@@ -589,7 +666,7 @@ async function processVacation(interaction) {
     afkData[userId] = { type: 'vacation', reason, days, startTime: now, returnTime, active: true, username: interaction.user.tag };
     saveAfkData(afkData);
 
-    await giveAfkRole(interaction.guild, userId);
+    await giveAfkRole(interaction.guild, userId, returnTime);
 
     const afkChannelId = process.env.AFK_CHANNEL_ID;
     if (afkChannelId) {
@@ -641,7 +718,8 @@ async function processAway(interaction) {
     afkData[userId] = { type: 'away', reason, timeStr, startTime: now, returnTime, active: true, username: interaction.user.tag };
     saveAfkData(afkData);
 
-    await giveAfkRole(interaction.guild, userId);
+    // Для "отошёл" не создаём роль с датой, только базовую роль отпуска
+    await giveAfkRole(interaction.guild, userId, null);
 
     const afkChannelId = process.env.AFK_CHANNEL_ID;
     if (afkChannelId) {
@@ -750,28 +828,13 @@ function checkExpiredAfk() {
 }
 
 // ============================================================
-//                        СБОР КОМАНД
-// ============================================================
-client.commands = new Collection();
-const commandsPath = path.join(__dirname, 'commands');
-if (fs.existsSync(commandsPath)) {
-    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-    for (const file of commandFiles) {
-        const command = require(path.join(commandsPath, file));
-        client.commands.set(command.data.name, command);
-    }
-}
-
-// ============================================================
 //                        ГОТОВНОСТЬ
 // ============================================================
 client.once('ready', () => {
     console.log(`✅ Бот ${client.user.tag} запущен!`);
     console.log(`На серверах: ${client.guilds.cache.size}`);
 
-    // Проверка напоминаний каждые 30 секунд
     setInterval(checkEventReminders, 30000);
-    // Проверка авто-возврата из отпусков каждую минуту
     setInterval(checkExpiredAfk, 60000);
 });
 
@@ -793,13 +856,11 @@ client.on('guildMemberAdd', async member => {
 // ============================================================
 client.on('interactionCreate', async interaction => {
     
-    // ===== СЛЕШ-КОМАНДЫ =====
     if (interaction.isChatInputCommand()) {
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
+        const commandName = interaction.commandName;
 
-        // Обработка кастомных команд прямо здесь
-        if (interaction.commandName === 'event') {
+        // ===== /event =====
+        if (commandName === 'event') {
             const subcommand = interaction.options.getSubcommand();
             
             if (subcommand === 'create') {
@@ -812,7 +873,7 @@ client.on('interactionCreate', async interaction => {
                 const [day, month, year] = date.split('.').map(Number);
                 const [hours, minutes] = time.split(':').map(Number);
                 const eventDate = new Date(year, month - 1, day, hours, minutes);
-                eventDate.setHours(eventDate.getHours() - 3); // МСК → UTC
+                eventDate.setHours(eventDate.getHours() - 3);
                 const unixTimestamp = Math.floor(eventDate.getTime() / 1000);
 
                 if (eventDate <= new Date()) {
@@ -869,13 +930,13 @@ client.on('interactionCreate', async interaction => {
             }
 
             if (subcommand === 'end') {
-                const eventId = interaction.options.getString('id');
-                await endEvent(interaction, eventId);
+                await endEvent(interaction, interaction.options.getString('id'));
                 return;
             }
         }
 
-        if (interaction.commandName === 'raid') {
+        // ===== /raid =====
+        if (commandName === 'raid') {
             const extraMessage = interaction.options.getString('сообщение') || '';
             let content = '@everyone **⚔️ RAID! ⚔️**';
             if (extraMessage) content += `\n\n📋 ${extraMessage}`;
@@ -885,7 +946,8 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        if (interaction.commandName === 'afk') {
+        // ===== /afk =====
+        if (commandName === 'afk') {
             const subcommand = interaction.options.getSubcommand();
 
             if (subcommand === 'setup') {
@@ -895,7 +957,7 @@ client.on('interactionCreate', async interaction => {
                         'Если тебе нужно отлучиться — нажми на одну из кнопок ниже.\n\n' +
                         '**📅 Отпуск** — если отсутствуешь больше суток\n' +
                         '**⏰ Отошёл** — если отлучился на несколько часов/минут\n\n' +
-                        '⚠️ Стафф будет видеть твой статус.\n' +
+                        '⚠️ После отметки тебе будет выдана роль с датой возвращения.\n' +
                         'По возвращении нажми кнопку **🔄 Вернулся** в этом же канале.'
                     )
                     .setColor(0x3498DB)
@@ -918,7 +980,8 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        if (interaction.commandName === 'setup') {
+        // ===== /setup =====
+        if (commandName === 'setup') {
             const subcommand = interaction.options.getSubcommand();
 
             if (subcommand === 'apply') {
@@ -961,13 +1024,6 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        // Стандартный вызов команды из файла
-        try {
-            await command.execute(interaction);
-        } catch (error) {
-            console.error(error);
-            await interaction.reply({ content: '❌ Произошла ошибка!', ephemeral: true }).catch(() => {});
-        }
         return;
     }
 
@@ -975,16 +1031,14 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
         const customId = interaction.customId;
 
-        // Заявки
+        // Кнопка "Подать заявку"
         if (customId === 'apply_button') {
             const modal = new ModalBuilder().setCustomId('apply_modal').setTitle('📋 Заявка в клан RUNA');
-
             const hoursInput = new TextInputBuilder().setCustomId('hours').setLabel('Сколько часов в Rust?').setPlaceholder('Например: 3500').setStyle(TextInputStyle.Short).setRequired(true);
             const ageInput = new TextInputBuilder().setCustomId('age').setLabel('Сколько тебе лет?').setPlaceholder('Например: 18').setStyle(TextInputStyle.Short).setRequired(true);
             const dailyHoursInput = new TextInputBuilder().setCustomId('daily_hours').setLabel('Сколько часов в день готов уделять?').setPlaceholder('Например: 6-8 часов').setStyle(TextInputStyle.Short).setRequired(true);
             const roleInput = new TextInputBuilder().setCustomId('role').setLabel('Твоя роль (электрик, комбат, билдер, фермер)').setPlaceholder('Например: комбат').setStyle(TextInputStyle.Short).setRequired(true);
             const listenInput = new TextInputBuilder().setCustomId('listen_skill').setLabel('Умение слушать коллы (от 1 до 10)').setPlaceholder('Например: 8').setStyle(TextInputStyle.Short).setRequired(true);
-
             modal.addComponents(
                 new ActionRowBuilder().addComponents(hoursInput),
                 new ActionRowBuilder().addComponents(ageInput),
@@ -992,40 +1046,34 @@ client.on('interactionCreate', async interaction => {
                 new ActionRowBuilder().addComponents(roleInput),
                 new ActionRowBuilder().addComponents(listenInput),
             );
-
             await interaction.showModal(modal);
             return;
         }
 
+        // Кнопка переключения статуса набора
         if (customId === 'toggle_status') {
             if (!interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
                 return interaction.reply({ content: '⛔ Только администратор может менять статус набора.', ephemeral: true });
             }
-
             const embed = interaction.message.embeds[0];
             const oldDescription = embed.description;
             const isOpen = oldDescription.includes('🟢 Открыт');
-
             const newEmbed = new EmbedBuilder(embed)
                 .setDescription(oldDescription.replace(isOpen ? '🟢 Открыт' : '🔴 Закрыт', isOpen ? '🔴 Закрыт' : '🟢 Открыт'))
                 .setColor(isOpen ? 0xED4245 : 0x57F287);
-
             const newRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder().setCustomId('apply_button').setLabel('📝 Подать заявку').setStyle(ButtonStyle.Primary),
                     new ButtonBuilder().setCustomId('toggle_status').setLabel(isOpen ? '🔴 Статус: Закрыт' : '🟢 Статус: Открыт').setStyle(isOpen ? ButtonStyle.Danger : ButtonStyle.Success),
                 );
-
             await interaction.update({ embeds: [newEmbed], components: [newRow] });
             return;
         }
 
-        // Принять/отклонить заявку (приватка)
+        // Принять заявку
         if (customId.startsWith('accept_')) {
             const targetUserId = customId.split('_')[1];
-            if (!interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
-                return interaction.reply({ content: '⛔ Нет прав!', ephemeral: true });
-            }
+            if (!interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) return interaction.reply({ content: '⛔ Нет прав!', ephemeral: true });
             try {
                 const user = await client.users.fetch(targetUserId);
                 const privateGuild = client.guilds.cache.get(process.env.PRIVATE_GUILD_ID);
@@ -1033,33 +1081,26 @@ client.on('interactionCreate', async interaction => {
                 const invite = await inviteChannel.createInvite({ maxUses: 1, maxAge: 86400, unique: true, reason: `Приглашение для ${user.tag}` });
                 await user.send(`🎉 **Твоя заявка в клан RUNA одобрена!**\nВот приглашение: ${invite.url}\n⚠️ Ссылка одноразовая и действует 24 часа.`).catch(() => {});
                 await interaction.update({ content: '✅ Заявка одобрена! Приглашение отправлено в ЛС.', components: [], embeds: [] });
-            } catch (e) {
-                await interaction.reply({ content: '❌ Ошибка при отправке приглашения.', ephemeral: true });
-            }
+            } catch (e) { await interaction.reply({ content: '❌ Ошибка.', ephemeral: true }); }
             return;
         }
 
+        // Отклонить заявку
         if (customId.startsWith('deny_')) {
             const targetUserId = customId.split('_')[1];
-            if (!interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
-                return interaction.reply({ content: '⛔ Нет прав!', ephemeral: true });
-            }
+            if (!interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) return interaction.reply({ content: '⛔ Нет прав!', ephemeral: true });
             try {
                 const user = await client.users.fetch(targetUserId);
                 await user.send('❌ **Твоя заявка в клан RUNA отклонена.**\nПопробуй подать заявку позже или улучши свои навыки.').catch(() => {});
                 await interaction.update({ content: '❌ Заявка отклонена.', components: [], embeds: [] });
-            } catch (e) {
-                await interaction.reply({ content: '❌ Ошибка при отправке уведомления.', ephemeral: true });
-            }
+            } catch (e) { await interaction.reply({ content: '❌ Ошибка.', ephemeral: true }); }
             return;
         }
 
-        // Тикеты
-        if (customId === 'create_ticket') {
-            await createTicket(interaction);
-            return;
-        }
+        // Создать тикет
+        if (customId === 'create_ticket') { await createTicket(interaction); return; }
 
+        // Закрыть тикет (показать модалку)
         if (customId.startsWith('ticket_close_')) {
             const userId = customId.split('_')[2];
             const modal = new ModalBuilder().setCustomId(`close_modal_${userId}`).setTitle('🔒 Закрытие тикета');
@@ -1069,47 +1110,24 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        if (customId.startsWith('ticket_call_')) {
-            const userId = customId.split('_')[2];
-            await callUser(interaction, userId);
-            await interaction.reply({ content: '📞 Вызов отправлен!', ephemeral: true });
-            return;
-        }
+        // Вызвать на обзвон
+        if (customId.startsWith('ticket_call_')) { await callUser(interaction, customId.split('_')[2]); await interaction.reply({ content: '📞 Вызов отправлен!', ephemeral: true }); return; }
 
-        if (customId.startsWith('ticket_review_')) {
-            const userId = customId.split('_')[2];
-            await setTicketReview(interaction, userId);
-            await interaction.reply({ content: '⏳ Статус обновлён!', ephemeral: true });
-            return;
-        }
+        // На рассмотрении
+        if (customId.startsWith('ticket_review_')) { await setTicketReview(interaction, customId.split('_')[2]); await interaction.reply({ content: '⏳ Статус обновлён!', ephemeral: true }); return; }
 
-        if (customId.startsWith('ticket_delete_')) {
-            const userId = customId.split('_')[2];
-            await deleteTicket(interaction, userId);
-            return;
-        }
+        // Удалить тикет
+        if (customId.startsWith('ticket_delete_')) { await deleteTicket(interaction, customId.split('_')[2]); return; }
 
         // Ивенты
-        if (customId.startsWith('event_accept_')) {
-            await handleEventResponse(interaction, customId.replace('event_accept_', ''), 'accept');
-            return;
-        }
-        if (customId.startsWith('event_decline_')) {
-            await handleEventResponse(interaction, customId.replace('event_decline_', ''), 'decline');
-            return;
-        }
-        if (customId.startsWith('event_tentative_')) {
-            await handleEventResponse(interaction, customId.replace('event_tentative_', ''), 'tentative');
-            return;
-        }
+        if (customId.startsWith('event_accept_')) { await handleEventResponse(interaction, customId.replace('event_accept_', ''), 'accept'); return; }
+        if (customId.startsWith('event_decline_')) { await handleEventResponse(interaction, customId.replace('event_decline_', ''), 'decline'); return; }
+        if (customId.startsWith('event_tentative_')) { await handleEventResponse(interaction, customId.replace('event_tentative_', ''), 'tentative'); return; }
 
-        // Отпуска
+        // Отпуск
         if (customId === 'afk_vacation') {
             const afkData = getAfkData();
-            if (afkData[interaction.user.id] && afkData[interaction.user.id].active) {
-                return interaction.reply({ content: '❌ Ты уже находишься в отпуске/отсутствии!', ephemeral: true });
-            }
-
+            if (afkData[interaction.user.id] && afkData[interaction.user.id].active) return interaction.reply({ content: '❌ Ты уже в отпуске/отсутствии!', ephemeral: true });
             const modal = new ModalBuilder().setCustomId('vacation_modal').setTitle('📅 Оформление отпуска');
             const daysInput = new TextInputBuilder().setCustomId('vacation_days').setLabel('На сколько дней?').setPlaceholder('Например: 7').setStyle(TextInputStyle.Short).setRequired(true);
             const reasonInput = new TextInputBuilder().setCustomId('vacation_reason').setLabel('Причина отпуска').setPlaceholder('Например: Уезжаю на море').setStyle(TextInputStyle.Paragraph).setRequired(true);
@@ -1118,12 +1136,10 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
+        // Отошёл
         if (customId === 'afk_away') {
             const afkData = getAfkData();
-            if (afkData[interaction.user.id] && afkData[interaction.user.id].active) {
-                return interaction.reply({ content: '❌ Ты уже находишься в отпуске/отсутствии!', ephemeral: true });
-            }
-
+            if (afkData[interaction.user.id] && afkData[interaction.user.id].active) return interaction.reply({ content: '❌ Ты уже в отпуске/отсутствии!', ephemeral: true });
             const modal = new ModalBuilder().setCustomId('away_modal').setTitle('⏰ Отсутствие');
             const timeInput = new TextInputBuilder().setCustomId('away_time').setLabel('На сколько часов или минут?').setPlaceholder('Например: 2 часа или 30 минут').setStyle(TextInputStyle.Short).setRequired(true);
             const reasonInput = new TextInputBuilder().setCustomId('away_reason').setLabel('Причина отсутствия').setPlaceholder('Например: Пошёл в магазин').setStyle(TextInputStyle.Paragraph).setRequired(true);
@@ -1132,11 +1148,8 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        if (customId.startsWith('afk_return_')) {
-            const userId = customId.replace('afk_return_', '');
-            await returnFromAfk(interaction, userId);
-            return;
-        }
+        // Вернулся
+        if (customId.startsWith('afk_return_')) { await returnFromAfk(interaction, customId.replace('afk_return_', '')); return; }
     }
 
     // ===== МОДАЛЬНЫЕ ОКНА =====
@@ -1180,25 +1193,13 @@ client.on('interactionCreate', async interaction => {
                 );
 
             await applyChannel.send({ embeds: [embed], components: [buttons] });
-
-            await sendLog(process.env.COMMUNITY_GUILD_ID, 'apply', {
-                userId: interaction.user.id, userTag: interaction.user.tag,
-                hours, age, dailyHours, role, listenSkill,
-            });
-
+            await sendLog(process.env.COMMUNITY_GUILD_ID, 'apply', { userId: interaction.user.id, userTag: interaction.user.tag, hours, age, dailyHours, role, listenSkill });
             await interaction.reply({ content: '✅ **Заявка успешно отправлена!**\nОжидай, скоро с тобой свяжутся.', ephemeral: true });
             return;
         }
 
-        if (interaction.customId === 'vacation_modal') {
-            await processVacation(interaction);
-            return;
-        }
-
-        if (interaction.customId === 'away_modal') {
-            await processAway(interaction);
-            return;
-        }
+        if (interaction.customId === 'vacation_modal') { await processVacation(interaction); return; }
+        if (interaction.customId === 'away_modal') { await processAway(interaction); return; }
 
         if (interaction.customId.startsWith('close_modal_')) {
             const userId = interaction.customId.split('_')[2];
