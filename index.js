@@ -82,6 +82,10 @@ async function registerCommands() {
         {
             name: 'tickets',
             description: '📋 Показать список активных тикетов (только для стаффа)'
+        },
+        {
+            name: 'clearpanel',
+            description: '🗑️ Очистить все панели бота в канале (только для стаффа)'
         }
     ];
 
@@ -109,6 +113,10 @@ client.once('ready', async () => {
     const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
     if (!guild) {
         console.error(`❌ Сервер с ID ${CONFIG.GUILD_ID} не найден!`);
+        console.log('📋 Доступные серверы:');
+        client.guilds.cache.forEach(g => {
+            console.log(`- ${g.name} (${g.id})`);
+        });
         return;
     }
 
@@ -122,6 +130,12 @@ client.once('ready', async () => {
         const staffRole = await guild.roles.fetch(CONFIG.STAFF_ROLE);
         if (!staffRole) {
             console.error(`❌ Роль с ID ${CONFIG.STAFF_ROLE} не найдена!`);
+            console.log('📋 Доступные роли:');
+            guild.roles.cache.forEach(role => {
+                if (role.name !== '@everyone') {
+                    console.log(`- ${role.name} (${role.id})`);
+                }
+            });
             return;
         }
         console.log(`✅ Найдена роль стаффа: ${staffRole.name}`);
@@ -130,55 +144,51 @@ client.once('ready', async () => {
         return;
     }
 
-    // Создаем канал для тикетов если его нет
-    let ticketChannel = guild.channels.cache.find(ch => ch.name === '🎫-tickets');
-    if (!ticketChannel) {
+    // Проверяем категорию для тикетов (если указана)
+    if (CONFIG.TICKET_CATEGORY) {
         try {
-            console.log('📝 Создаю канал для тикетов...');
-            ticketChannel = await guild.channels.create({
-                name: '🎫-tickets',
-                type: ChannelType.GuildText,
-                permissionOverwrites: [
-                    {
-                        id: guild.id,
-                        deny: [PermissionFlagsBits.ViewChannel],
-                    },
-                    {
-                        id: CONFIG.STAFF_ROLE,
-                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
-                    }
-                ]
-            });
-            console.log('✅ Канал для тикетов создан');
+            const category = await guild.channels.fetch(CONFIG.TICKET_CATEGORY);
+            if (category) {
+                console.log(`✅ Найдена категория: ${category.name}`);
+            } else {
+                console.warn('⚠️ Категория не найдена, тикеты будут создаваться без категории');
+            }
         } catch (error) {
-            console.error('❌ Ошибка создания канала:', error);
-            return;
+            console.warn('⚠️ Ошибка при проверке категории:', error.message);
         }
-    } else {
-        console.log('✅ Канал для тикетов найден');
     }
 
-    // Создаем панель тикетов в канале по умолчанию
-    try {
-        await createTicketPanel(ticketChannel);
-        console.log('✅ Панель тикетов создана');
-    } catch (error) {
-        console.error('❌ Ошибка создания панели:', error);
+    // Проверяем лог-канал (если указан)
+    if (CONFIG.LOG_CHANNEL) {
+        try {
+            const logChannel = await guild.channels.fetch(CONFIG.LOG_CHANNEL);
+            if (logChannel) {
+                console.log(`✅ Найден лог-канал: ${logChannel.name}`);
+            } else {
+                console.warn('⚠️ Лог-канал не найден');
+            }
+        } catch (error) {
+            console.warn('⚠️ Ошибка при проверке лог-канала:', error.message);
+        }
     }
     
     // Устанавливаем статус
     client.user.setPresence({
-        activities: [{ name: 'RUNA | /panel ticket', type: 3 }],
+        activities: [{ 
+            name: 'RUNA | /panel ticket', 
+            type: 3 // WATCHING
+        }],
         status: 'online'
     });
 
     console.log('🎫 Бот полностью готов к работе!');
     console.log('📋 Доступные команды:');
-    console.log('  /panel ticket - Создать панель тикетов');
-    console.log('  /panel status - Показать статус');
+    console.log('  /panel ticket - Создать панель тикетов в текущем канале');
+    console.log('  /panel status - Создать панель статуса в текущем канале');
     console.log('  /recruitment - Открыть/закрыть набор');
-    console.log('  /status - Проверить статус');
+    console.log('  /status - Проверить статус набора');
     console.log('  /tickets - Список активных тикетов');
+    console.log('  /clearpanel - Очистить панели бота в канале');
 });
 
 // Обработка команд (slash commands)
@@ -245,7 +255,59 @@ client.on('interactionCreate', async interaction => {
 
         await showTicketsList(interaction);
     }
+
+    // Команда /clearpanel
+    if (commandName === 'clearpanel') {
+        if (!isStaff) {
+            return interaction.reply({ 
+                content: '❌ У вас нет прав для использования этой команды! Требуется роль стаффа.', 
+                ephemeral: true 
+            });
+        }
+
+        await clearPanels(interaction);
+    }
 });
+
+// Функция очистки панелей
+async function clearPanels(interaction) {
+    const channel = interaction.channel;
+    
+    try {
+        const messages = await channel.messages.fetch({ limit: 50 });
+        const botMessages = messages.filter(msg => 
+            msg.author.id === client.user.id && 
+            msg.embeds.length > 0 && 
+            (msg.embeds[0].title?.includes('Создание тикета') || 
+             msg.embeds[0].title?.includes('Статус клана'))
+        );
+
+        if (botMessages.size === 0) {
+            return interaction.reply({
+                content: '📭 В этом канале нет панелей бота для очистки.',
+                ephemeral: true
+            });
+        }
+
+        let deletedCount = 0;
+        for (const msg of botMessages.values()) {
+            await msg.delete();
+            deletedCount++;
+        }
+
+        await interaction.reply({
+            content: `✅ Удалено ${deletedCount} панелей в этом канале!`,
+            ephemeral: true
+        });
+
+    } catch (error) {
+        console.error('❌ Ошибка очистки панелей:', error);
+        await interaction.reply({
+            content: '❌ Произошла ошибка при очистке панелей.',
+            ephemeral: true
+        });
+    }
+}
 
 // Функция создания панели статуса
 async function createStatusPanel(channel) {
@@ -271,10 +333,14 @@ async function createStatusPanel(channel) {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-    // Очищаем старые сообщения бота
+    // Удаляем старые панели статуса
     try {
         const messages = await channel.messages.fetch({ limit: 20 });
-        const botMessages = messages.filter(msg => msg.author.id === client.user.id);
+        const botMessages = messages.filter(msg => 
+            msg.author.id === client.user.id && 
+            msg.embeds.length > 0 && 
+            msg.embeds[0].title?.includes('Статус клана')
+        );
         for (const msg of botMessages.values()) {
             await msg.delete();
         }
@@ -357,10 +423,14 @@ async function createTicketPanel(channel) {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-    // Очищаем старые сообщения бота
+    // Удаляем старые панели тикетов
     try {
         const messages = await channel.messages.fetch({ limit: 20 });
-        const botMessages = messages.filter(msg => msg.author.id === client.user.id);
+        const botMessages = messages.filter(msg => 
+            msg.author.id === client.user.id && 
+            msg.embeds.length > 0 && 
+            msg.embeds[0].title?.includes('Создание тикета')
+        );
         for (const msg of botMessages.values()) {
             await msg.delete();
         }
@@ -394,14 +464,13 @@ async function toggleRecruitment(interaction) {
             const botMessages = messages.filter(msg => 
                 msg.author.id === client.user.id && 
                 msg.embeds.length > 0 && 
-                msg.embeds[0].title && 
-                msg.embeds[0].title.includes('Создание тикета')
+                msg.embeds[0].title?.includes('Создание тикета')
             );
             
             for (const msg of botMessages.values()) {
                 await msg.delete();
                 await createTicketPanel(channel);
-                break;
+                break; // Обновляем только одну панель в канале
             }
         } catch (error) {
             // Игнорируем ошибки
@@ -413,9 +482,6 @@ async function toggleRecruitment(interaction) {
 async function checkRecruitmentStatus() {
     return recruitmentOpen;
 }
-
-// Остальной код для кнопок, модальных окон и т.д.
-// (все функции из предыдущего ответа остаются без изменений)
 
 // Модальное окно для создания тикета
 client.on('interactionCreate', async interaction => {
