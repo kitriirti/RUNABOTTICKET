@@ -66,6 +66,63 @@ console.log('✅ Переменные окружения загружены');
 const tickets = new Collection();
 let recruitmentOpen = true;
 
+// ========== ФУНКЦИЯ ЛОГИРОВАНИЯ ==========
+async function sendLog(guild, action, user, hours = null, age = null, staff = null) {
+    if (!CONFIG.LOG_CHANNEL) return;
+    
+    const logChannel = guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+    if (!logChannel) return;
+
+    let description = '';
+    let color = '#FFFFFF';
+    let title = '';
+
+    switch (action) {
+        case 'create':
+            title = '📝 Создан тикет';
+            description = `**Пользователь:** ${user}\n**Часов:** ${hours}\n**Возраст:** ${age}`;
+            color = '#00FF00';
+            break;
+        case 'review':
+            title = '📋 На рассмотрении';
+            description = `**Пользователь:** ${user}\n**Стафф:** ${staff}\n**Тикет отправлен на рассмотрение**`;
+            color = '#FFA500';
+            break;
+        case 'accept':
+            title = '✅ Тикет принят';
+            description = `**Пользователь:** ${user}\n**Принял:** ${staff}\n**Пользователь приглашен в клан!**`;
+            color = '#00FF00';
+            break;
+        case 'close':
+            title = '🔒 Тикет закрыт';
+            description = `**Пользователь:** ${user}\n**Закрыл:** ${staff || user}\n**Тикет закрыт**`;
+            color = '#FF0000';
+            break;
+        case 'delete':
+            title = '🗑️ Тикет удален';
+            description = `**Пользователь:** ${user}\n**Удалил:** ${staff}\n**Тикет удален**`;
+            color = '#FF0000';
+            break;
+        case 'call':
+            title = '📞 Вызов на обзвон';
+            description = `**Пользователь:** ${user}\n**Вызвал:** ${staff}\n**Пользователь вызван в голосовой канал**`;
+            color = '#0099FF';
+            break;
+        default:
+            return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setColor(color)
+        .setDescription(description)
+        .setTimestamp()
+        .setFooter({ text: 'RUNA Clan • 2026' });
+
+    await logChannel.send({ embeds: [embed] });
+    console.log(`📝 Лог: ${action} | ${user.tag || user} | ${hours || ''} ${age || ''}`);
+}
+
 // ========== РЕГИСТРАЦИЯ КОМАНД ==========
 async function registerCommands() {
     const commands = [
@@ -657,23 +714,8 @@ client.on('interactionCreate', async interaction => {
             components: [row] 
         });
 
-        // ========== КОМПАКТНЫЕ ЛОГИ ==========
-        if (CONFIG.LOG_CHANNEL) {
-            const logChannel = guild.channels.cache.get(CONFIG.LOG_CHANNEL);
-            if (logChannel) {
-                const logEmbed = new EmbedBuilder()
-                    .setColor('#FFA500')
-                    .setDescription(
-                        `**Тег:** ${interaction.user}\n` +
-                        `**Часы:** ${hours}\n` +
-                        `**Возраст:** ${age}`
-                    )
-                    .setTimestamp();
-
-                await logChannel.send({ embeds: [logEmbed] });
-                console.log(`📝 Лог: ${interaction.user.tag} | ${hours}ч | ${age}л`);
-            }
-        }
+        // ========== ЛОГ: СОЗДАН ТИКЕТ ==========
+        await sendLog(guild, 'create', interaction.user, hours, age);
 
         await interaction.editReply({
             content: `✅ Тикет создан! Перейдите в: <#${channel.id}>`
@@ -692,10 +734,13 @@ async function handleTicketAction(interaction) {
     const member = await interaction.guild.members.fetch(interaction.user.id);
     const isStaff = member.roles.cache.has(CONFIG.STAFF_ROLE);
     const ticketInfo = tickets.get(interaction.channel.id);
+    const guild = interaction.guild;
     
     if (!ticketInfo) {
         return interaction.reply({ content: '❌ Это не тикет!', ephemeral: true });
     }
+
+    const user = await guild.members.fetch(ticketInfo.userId);
 
     if (interaction.customId === 'accept_ticket' || interaction.customId === 'call_ticket') {
         if (!isStaff) {
@@ -719,7 +764,9 @@ async function handleTicketAction(interaction) {
 
     switch (interaction.customId) {
         case 'accept_ticket': {
-            const user = await interaction.guild.members.fetch(ticketInfo.userId);
+            // ========== ЛОГ: ПРИНЯТ ТИКЕТ ==========
+            await sendLog(guild, 'accept', user.user, null, null, interaction.user);
+            
             await interaction.editReply({
                 content: `✅ Тикет принят! ${user} приглашен в клан!`,
                 embeds: [],
@@ -734,7 +781,6 @@ async function handleTicketAction(interaction) {
         }
 
         case 'call_ticket': {
-            const user = await interaction.guild.members.fetch(ticketInfo.userId);
             const voiceState = interaction.member.voice;
             
             if (!voiceState.channel) {
@@ -745,6 +791,10 @@ async function handleTicketAction(interaction) {
 
             try {
                 await user.voice.setChannel(voiceState.channel);
+                
+                // ========== ЛОГ: ВЫЗОВ НА ОБЗВОН ==========
+                await sendLog(guild, 'call', user.user, null, null, interaction.user);
+                
                 await interaction.editReply({
                     content: `📞 ${user} вызван в ${voiceState.channel}!`
                 });
@@ -757,6 +807,10 @@ async function handleTicketAction(interaction) {
         }
 
         case 'close_ticket': {
+            // ========== ЛОГ: ЗАКРЫТ ТИКЕТ ==========
+            const closer = interaction.user.id === ticketInfo.userId ? user.user : interaction.user;
+            await sendLog(guild, 'close', user.user, null, null, closer);
+            
             const embed = new EmbedBuilder()
                 .setTitle('Тикет закрыт')
                 .setDescription('Тикет может быть открыт снова.')
@@ -774,6 +828,9 @@ async function handleTicketAction(interaction) {
         }
 
         case 'delete_ticket': {
+            // ========== ЛОГ: УДАЛЕН ТИКЕТ ==========
+            await sendLog(guild, 'delete', user.user, null, null, interaction.user);
+            
             await interaction.editReply({
                 content: '🗑️ Тикет будет удален через 3 секунды...'
             });
