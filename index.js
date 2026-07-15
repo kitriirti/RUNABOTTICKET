@@ -41,27 +41,26 @@ const CONFIG = {
 
 // ========== ПРОВЕРКА ПЕРЕМЕННЫХ ==========
 if (!process.env.DISCORD_TOKEN) {
-    console.error('❌ ОШИБКА: DISCORD_TOKEN не найден в .env!');
+    console.error('❌ ОШИБКА: DISCORD_TOKEN не найден!');
     process.exit(1);
 }
 
 if (!CONFIG.GUILD_ID) {
-    console.error('❌ ОШИБКА: GUILD_ID не найден в .env!');
+    console.error('❌ ОШИБКА: GUILD_ID не найден!');
     process.exit(1);
 }
 
 if (!CONFIG.STAFF_ROLE) {
-    console.error('❌ ОШИБКА: STAFF_ROLE_ID не найден в .env!');
+    console.error('❌ ОШИБКА: STAFF_ROLE_ID не найден!');
     process.exit(1);
 }
 
 if (!CONFIG.CLIENT_ID) {
-    console.error('❌ ОШИБКА: CLIENT_ID не найден в .env!');
-    console.log('💡 Получите CLIENT_ID в Discord Developer Portal (Application ID)');
+    console.error('❌ ОШИБКА: CLIENT_ID не найден!');
     process.exit(1);
 }
 
-console.log('✅ Все переменные окружения загружены');
+console.log('✅ Переменные окружения загружены');
 
 // ========== ХРАНИЛИЩА ==========
 const tickets = new Collection();
@@ -109,32 +108,17 @@ async function registerCommands() {
     ];
 
     try {
-        console.log('🔄 Регистрация команд...');
-        
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         
-        // Регистрируем на сервере
         await rest.put(
             Routes.applicationGuildCommands(CONFIG.CLIENT_ID, CONFIG.GUILD_ID),
             { body: commands }
         );
         
-        console.log(`✅ Зарегистрировано ${commands.length} команд на сервере!`);
-        
-        // Регистрируем глобально (на всякий случай)
-        try {
-            await rest.put(
-                Routes.applicationCommands(CONFIG.CLIENT_ID),
-                { body: commands }
-            );
-            console.log(`✅ Зарегистрировано ${commands.length} глобальных команд!`);
-        } catch (error) {
-            console.log('⚠️ Глобальная регистрация не удалась (не критично):', error.message);
-        }
-        
+        console.log(`✅ Зарегистрировано ${commands.length} команд!`);
         return true;
     } catch (error) {
-        console.error('❌ Ошибка регистрации команд:', error);
+        console.error('❌ Ошибка регистрации:', error);
         return false;
     }
 }
@@ -192,7 +176,7 @@ async function createTicketPanel(channel) {
             await msg.delete();
         }
     } catch (error) {
-        console.warn('⚠️ Не удалось очистить сообщения:', error.message);
+        // Игнорируем
     }
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -229,7 +213,6 @@ async function createStatusPanel(channel) {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-    // Удаляем старые панели статуса
     try {
         const messages = await channel.messages.fetch({ limit: 30 });
         const botMessages = messages.filter(msg => 
@@ -241,7 +224,7 @@ async function createStatusPanel(channel) {
             await msg.delete();
         }
     } catch (error) {
-        console.warn('⚠️ Не удалось очистить сообщения:', error.message);
+        // Игнорируем
     }
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -352,7 +335,7 @@ async function clearPanels(interaction) {
 
         if (botMessages.size === 0) {
             return interaction.reply({
-                content: '📭 В этом канале нет панелей бота для очистки.',
+                content: '📭 В этом канале нет панелей бота.',
                 ephemeral: true
             });
         }
@@ -364,14 +347,14 @@ async function clearPanels(interaction) {
         }
 
         await interaction.reply({
-            content: `✅ Удалено ${deletedCount} панелей в этом канале!`,
+            content: `✅ Удалено ${deletedCount} панелей!`,
             ephemeral: true
         });
 
     } catch (error) {
-        console.error('❌ Ошибка очистки панелей:', error);
+        console.error('❌ Ошибка:', error);
         await interaction.reply({
-            content: '❌ Произошла ошибка при очистке панелей.',
+            content: '❌ Ошибка при очистке панелей.',
             ephemeral: true
         });
     }
@@ -388,7 +371,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'register') {
         if (!isStaff) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для использования этой команды!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
@@ -402,11 +385,11 @@ client.on('interactionCreate', async interaction => {
         
         if (registered) {
             await interaction.editReply({
-                content: '✅ Команды успешно зарегистрированы!\n💡 Подождите 1-2 минуты и напишите **/** в чате.'
+                content: '✅ Команды зарегистрированы! Напишите / в чате.'
             });
         } else {
             await interaction.editReply({
-                content: '❌ Ошибка регистрации команд! Проверьте логи на Render.'
+                content: '❌ Ошибка регистрации! Проверьте логи.'
             });
         }
     }
@@ -415,7 +398,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'panel') {
         if (!isStaff) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для использования этой команды!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
@@ -426,13 +409,13 @@ client.on('interactionCreate', async interaction => {
         if (type === 'ticket') {
             await createTicketPanel(channel);
             await interaction.reply({ 
-                content: '✅ Панель тикетов создана/обновлена в этом канале!', 
+                content: '✅ Панель тикетов создана!', 
                 ephemeral: true 
             });
         } else if (type === 'status') {
             await createStatusPanel(channel);
             await interaction.reply({ 
-                content: '✅ Панель статуса создана/обновлена в этом канале!', 
+                content: '✅ Панель статуса создана!', 
                 ephemeral: true 
             });
         }
@@ -442,7 +425,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'recruitment') {
         if (!isStaff) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для использования этой команды!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
@@ -458,7 +441,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'tickets') {
         if (!isStaff) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для использования этой команды!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
@@ -469,7 +452,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'clearpanel') {
         if (!isStaff) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для использования этой команды!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
@@ -481,25 +464,23 @@ client.on('interactionCreate', async interaction => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    // ===== КНОПКА СОЗДАНИЯ ТИКЕТА =====
+    // Кнопка создания тикета
     if (interaction.customId === 'create_ticket') {
         if (!recruitmentOpen) {
             return interaction.reply({ 
-                content: '❌ Набор в клан временно закрыт!', 
+                content: '❌ Набор закрыт!', 
                 ephemeral: true 
             });
         }
 
-        // Проверяем открытый тикет
         const existingTicket = tickets.find(t => t.userId === interaction.user.id && t.status === 'open');
         if (existingTicket) {
             return interaction.reply({
-                content: `❌ У вас уже есть открытый тикет: <#${existingTicket.channelId}>`,
+                content: `❌ У вас уже есть тикет: <#${existingTicket.channelId}>`,
                 ephemeral: true
             });
         }
 
-        // Создаем модальное окно
         const modal = new ModalBuilder()
             .setCustomId('ticket_modal')
             .setTitle('📝 Заявка в RUNA');
@@ -509,45 +490,35 @@ client.on('interactionCreate', async interaction => {
             .setLabel('1. Сколько часов в игре?')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Пример: 3500')
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(10);
+            .setRequired(true);
 
         const ageInput = new TextInputBuilder()
             .setCustomId('age')
             .setLabel('2. Сколько вам лет?')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Пример: 18')
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(3);
+            .setRequired(true);
 
         const onlineInput = new TextInputBuilder()
             .setCustomId('online')
             .setLabel('3. Часов в день / Часовой пояс')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Пример: 8ч / UTC+3')
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(30);
+            .setRequired(true);
 
         const callInput = new TextInputBuilder()
             .setCustomId('call')
             .setLabel('4. Умение слушать колл (1-10)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Пример: 7')
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(2);
+            .setRequired(true);
 
         const roleInput = new TextInputBuilder()
             .setCustomId('role')
             .setLabel('5. Роль (Комбат/Билдер/Электрик/Фермер)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Пример: Комбат')
-            .setRequired(true)
-            .setMinLength(1)
-            .setMaxLength(20);
+            .setRequired(true);
 
         modal.addComponents(
             new ActionRowBuilder().addComponents(hoursInput),
@@ -560,20 +531,19 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // ===== КНОПКА ПЕРЕКЛЮЧЕНИЯ НАБОРА =====
+    // Кнопка переключения набора
     if (interaction.customId === 'toggle_recruitment') {
         const member = await interaction.guild.members.fetch(interaction.user.id);
         if (!member.roles.cache.has(CONFIG.STAFF_ROLE)) {
             return interaction.reply({ 
-                content: '❌ У вас нет прав для этого действия!', 
+                content: '❌ У вас нет прав!', 
                 ephemeral: true 
             });
         }
-
         await toggleRecruitment(interaction);
     }
 
-    // ===== КНОПКА ОБНОВЛЕНИЯ СТАТУСА =====
+    // Кнопка обновления статуса
     if (interaction.customId === 'refresh_status') {
         const status = recruitmentOpen ? '🔓 ОТКРЫТ' : '🔒 ЗАКРЫТ';
         const activeTickets = tickets.filter(t => t.status === 'open').size;
@@ -598,7 +568,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.update({ embeds: [embed] });
     }
 
-    // ===== КНОПКИ УПРАВЛЕНИЯ ТИКЕТОМ =====
+    // Кнопки управления тикетом
     if (['accept_ticket', 'call_ticket', 'close_ticket', 'delete_ticket'].includes(interaction.customId)) {
         await handleTicketAction(interaction);
     }
@@ -617,33 +587,33 @@ client.on('interactionCreate', async interaction => {
     const call = parseInt(interaction.fields.getTextInputValue('call'));
     const role = interaction.fields.getTextInputValue('role').toLowerCase();
 
-    // ===== ВАЛИДАЦИЯ =====
+    // Валидация
     if (hours < CONFIG.MIN_HOURS) {
         return interaction.editReply({
-            content: `❌ Автоматическое отклонение! Минимальный онлайн: ${CONFIG.MIN_HOURS} часов. У вас: ${hours} часов.`
+            content: `❌ Отклонено! Минимальный онлайн: ${CONFIG.MIN_HOURS} часов. У вас: ${hours}.`
         });
     }
 
     if (age < CONFIG.MIN_AGE) {
         return interaction.editReply({
-            content: `❌ Автоматическое отклонение! Минимальный возраст: ${CONFIG.MIN_AGE} лет. У вас: ${age} лет.`
+            content: `❌ Отклонено! Минимальный возраст: ${CONFIG.MIN_AGE} лет. У вас: ${age}.`
         });
     }
 
     if (call < 1 || call > 10) {
         return interaction.editReply({
-            content: '❌ Оценка умения слушать колл должна быть от 1 до 10!'
+            content: '❌ Оценка должна быть от 1 до 10!'
         });
     }
 
     const validRoles = ['комбат', 'билдер', 'электрик', 'фермер'];
     if (!validRoles.includes(role)) {
         return interaction.editReply({
-            content: '❌ Неверная роль! Доступные роли: Комбат, Билдер, Электрик, Фермер'
+            content: '❌ Неверная роль! Доступны: Комбат, Билдер, Электрик, Фермер'
         });
     }
 
-    // ===== СОЗДАНИЕ ТИКЕТА =====
+    // СОЗДАЕМ ТИКЕТ
     const guild = interaction.guild;
     const category = CONFIG.TICKET_CATEGORY ? guild.channels.cache.get(CONFIG.TICKET_CATEGORY) : null;
     
@@ -659,16 +629,15 @@ client.on('interactionCreate', async interaction => {
                 },
                 {
                     id: interaction.user.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles],
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
                 },
                 {
                     id: CONFIG.STAFF_ROLE,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles],
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
                 }
             ]
         });
 
-        // Сохраняем тикет
         tickets.set(channel.id, {
             userId: interaction.user.id,
             channelId: channel.id,
@@ -677,13 +646,12 @@ client.on('interactionCreate', async interaction => {
             data: { hours, age, online, call, role }
         });
 
-        // Embed с анкетой
         const embed = new EmbedBuilder()
             .setTitle('📋 Новая заявка в RUNA')
             .setColor('#00FF00')
             .setDescription(`Заявка от ${interaction.user}`)
             .addFields(
-                { name: '👤 Пользователь', value: `${interaction.user} (${interaction.user.id})`, inline: false },
+                { name: '👤 Пользователь', value: `${interaction.user}`, inline: false },
                 { name: '⏰ Часов в игре', value: `${hours} ч`, inline: true },
                 { name: '📅 Возраст', value: `${age} лет`, inline: true },
                 { name: '🕐 Онлайн/Часовой пояс', value: online, inline: false },
@@ -724,12 +692,11 @@ client.on('interactionCreate', async interaction => {
             const logChannel = guild.channels.cache.get(CONFIG.LOG_CHANNEL);
             if (logChannel) {
                 const logEmbed = new EmbedBuilder()
-                    .setTitle('📝 Создан новый тикет')
+                    .setTitle('📝 Новый тикет')
                     .setColor('#FFA500')
                     .addFields(
                         { name: 'Пользователь', value: `${interaction.user}`, inline: true },
-                        { name: 'Канал', value: `<#${channel.id}>`, inline: true },
-                        { name: 'Время', value: new Date().toLocaleString(), inline: true }
+                        { name: 'Канал', value: `<#${channel.id}>`, inline: true }
                     )
                     .setTimestamp();
                 
@@ -738,13 +705,13 @@ client.on('interactionCreate', async interaction => {
         }
 
         await interaction.editReply({
-            content: `✅ Тикет успешно создан! Перейдите в канал: <#${channel.id}>`
+            content: `✅ Тикет создан! Перейдите в: <#${channel.id}>`
         });
 
     } catch (error) {
-        console.error('❌ Ошибка создания тикета:', error);
+        console.error('❌ Ошибка:', error);
         await interaction.editReply({
-            content: '❌ Произошла ошибка при создании тикета. Попробуйте позже.'
+            content: '❌ Ошибка при создании тикета.'
         });
     }
 });
@@ -759,22 +726,21 @@ async function handleTicketAction(interaction) {
         return interaction.reply({ content: '❌ Это не тикет!', ephemeral: true });
     }
 
-    // Проверка прав
     if (interaction.customId === 'accept_ticket' || interaction.customId === 'call_ticket') {
         if (!isStaff) {
-            return interaction.reply({ content: '❌ Только стафф может это делать!', ephemeral: true });
+            return interaction.reply({ content: '❌ Только стафф!', ephemeral: true });
         }
     }
 
     if (interaction.customId === 'close_ticket') {
         if (!isStaff && interaction.user.id !== ticketInfo.userId) {
-            return interaction.reply({ content: '❌ Только создатель тикета или стафф может закрыть тикет!', ephemeral: true });
+            return interaction.reply({ content: '❌ Нет прав!', ephemeral: true });
         }
     }
 
     if (interaction.customId === 'delete_ticket') {
         if (!isStaff) {
-            return interaction.reply({ content: '❌ Только стафф может удалить тикет!', ephemeral: true });
+            return interaction.reply({ content: '❌ Только стафф!', ephemeral: true });
         }
     }
 
@@ -784,7 +750,7 @@ async function handleTicketAction(interaction) {
         case 'accept_ticket': {
             const user = await interaction.guild.members.fetch(ticketInfo.userId);
             await interaction.editReply({
-                content: `✅ Тикет принят! ${user} приглашен(а) в клан!`,
+                content: `✅ Тикет принят! ${user} приглашен в клан!`,
                 embeds: [],
                 components: []
             });
@@ -802,18 +768,18 @@ async function handleTicketAction(interaction) {
             
             if (!voiceState.channel) {
                 return interaction.editReply({
-                    content: '❌ Вы должны быть в голосовом канале для вызова!'
+                    content: '❌ Вы должны быть в голосовом канале!'
                 });
             }
 
             try {
                 await user.voice.setChannel(voiceState.channel);
                 await interaction.editReply({
-                    content: `📞 ${user} вызван(а) в голосовой канал ${voiceState.channel}!`
+                    content: `📞 ${user} вызван в ${voiceState.channel}!`
                 });
             } catch (error) {
                 await interaction.editReply({
-                    content: '❌ Не удалось переместить пользователя в голосовой канал!'
+                    content: '❌ Не удалось переместить пользователя!'
                 });
             }
             break;
@@ -822,7 +788,7 @@ async function handleTicketAction(interaction) {
         case 'close_ticket': {
             const embed = new EmbedBuilder()
                 .setTitle('🔒 Тикет закрыт')
-                .setDescription('Тикет был закрыт, но может быть открыт снова.')
+                .setDescription('Тикет может быть открыт снова.')
                 .setColor('#FF0000')
                 .setTimestamp();
 
@@ -852,76 +818,47 @@ async function handleTicketAction(interaction) {
 
 // ========== ЗАПУСК БОТА ==========
 client.once('ready', async () => {
-    console.log(`✅ Бот ${client.user.tag} успешно запущен!`);
-    console.log(`📊 На серверах: ${client.guilds.cache.size}`);
+    console.log(`✅ Бот ${client.user.tag} запущен!`);
     
     const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
     if (!guild) {
-        console.error(`❌ Сервер с ID ${CONFIG.GUILD_ID} не найден!`);
-        console.log('📋 Доступные серверы:');
-        client.guilds.cache.forEach(g => {
-            console.log(`- ${g.name} (${g.id})`);
-        });
+        console.error(`❌ Сервер не найден!`);
         return;
     }
 
     console.log(`✅ Сервер: ${guild.name}`);
 
-    // Проверяем роль стаффа
+    // Проверяем роль
     try {
         const staffRole = await guild.roles.fetch(CONFIG.STAFF_ROLE);
         if (!staffRole) {
-            console.error(`❌ Роль с ID ${CONFIG.STAFF_ROLE} не найдена!`);
-            console.log('📋 Доступные роли:');
-            guild.roles.cache.forEach(role => {
-                if (role.name !== '@everyone') {
-                    console.log(`- ${role.name} (${role.id})`);
-                }
-            });
+            console.error(`❌ Роль стаффа не найдена!`);
             return;
         }
         console.log(`✅ Роль стаффа: ${staffRole.name}`);
     } catch (error) {
-        console.error('❌ Ошибка проверки роли:', error);
+        console.error('❌ Ошибка:', error);
         return;
     }
 
-    // ===== АВТОМАТИЧЕСКАЯ РЕГИСТРАЦИЯ КОМАНД =====
-    console.log('🔄 Автоматическая регистрация команд...');
-    const registered = await registerCommands();
-    
-    if (registered) {
-        console.log('✅ Команды успешно зарегистрированы!');
-        console.log('📋 Доступные команды:');
-        console.log('  /panel ticket - Создать панель тикетов');
-        console.log('  /panel status - Создать панель статуса');
-        console.log('  /recruitment - Открыть/закрыть набор');
-        console.log('  /status - Проверить статус');
-        console.log('  /tickets - Список тикетов');
-        console.log('  /clearpanel - Очистить панели');
-        console.log('  /register - Перерегистрировать команды');
-    } else {
-        console.log('❌ Ошибка регистрации команд! Используйте /register в Discord');
-    }
+    // Регистрируем команды
+    console.log('🔄 Регистрация команд...');
+    await registerCommands();
 
-    // Статус бота
+    // Статус
     client.user.setPresence({
         activities: [{ name: 'RUNA | /panel ticket', type: 3 }],
         status: 'online'
     });
 
-    console.log('🎫 Бот полностью готов к работе!');
-    console.log('💡 Напишите / в Discord чтобы увидеть команды');
+    console.log('🎫 Бот готов!');
+    console.log('📋 Команды: /panel ticket, /panel status, /recruitment, /status, /tickets, /clearpanel, /register');
+    console.log('⚠️ Бот НЕ создает каналы автоматически!');
 });
 
 // ========== ОБРАБОТКА ОШИБОК ==========
-client.on('error', error => {
-    console.error('❌ Ошибка клиента:', error);
-});
-
-process.on('unhandledRejection', error => {
-    console.error('❌ Необработанная ошибка:', error);
-});
+client.on('error', console.error);
+process.on('unhandledRejection', console.error);
 
 // ========== ЗАПУСК ==========
 client.login(process.env.DISCORD_TOKEN);
